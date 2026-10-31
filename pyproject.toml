@@ -9,9 +9,11 @@ dependencies = [
     "pandas>=3.1.0",
     "plotly>=7.1.0",
     "psycopg[binary]>=3.3.6",
+    "pydantic-settings>=2.16.1",
     "python-dotenv>=1.2.4",
-    "sqlalchemy>=2.1.6",
+    "sqlalchemy[asyncio]>=2.1.6",
     "sqlglot>=30.25.0",
     "streamlit>=1.66.1",
+    "tabulate>=0.10.0",
     "uvicorn[standard]>=0.54.0",
 ]

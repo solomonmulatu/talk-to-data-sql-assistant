@@ -1,0 +1,137 @@
+[
+  {
+    "id": "customers_by_country",
+    "category": "aggregation",
+    "question": "How many customers are in each country?",
+    "expected_tables": ["Customer"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["country", "customer_count"],
+    "evaluation_notes": "One row per country; counts should add up to the total number of customers."
+  },
+  {
+    "id": "top_artists_by_albums",
+    "category": "ranking",
+    "question": "Which artists have the most albums? Show the top 10.",
+    "expected_tables": ["Artist", "Album"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["artist_name", "album_count"],
+    "evaluation_notes": "Return no more than 10 artists, ordered from highest album count to lowest."
+  },
+  {
+    "id": "longest_tracks",
+    "category": "sorting_and_limit",
+    "question": "What are the 10 longest tracks?",
+    "expected_tables": ["Track"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["track_name", "milliseconds"],
+    "evaluation_notes": "Return 10 tracks, ordered by duration descending."
+  },
+  {
+    "id": "revenue_by_country",
+    "category": "aggregation_and_join",
+    "question": "How much revenue did each country generate?",
+    "expected_tables": ["Invoice"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["billing_country", "revenue"],
+    "evaluation_notes": "Sum invoice totals grouped by billing country, ordered by revenue descending."
+  },
+  {
+    "id": "top_customers_by_spend",
+    "category": "ranking_and_join",
+    "question": "Who are the top 10 customers by total spending?",
+    "expected_tables": ["Customer", "Invoice"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["customer_name", "total_spent"],
+    "evaluation_notes": "Sum invoice totals per customer and order descending."
+  },
+  {
+    "id": "tracks_by_genre",
+    "category": "aggregation_and_join",
+    "question": "How many tracks are there in each genre?",
+    "expected_tables": ["Genre", "Track"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["genre_name", "track_count"],
+    "evaluation_notes": "One row per genre with a track count."
+  },
+  {
+    "id": "monthly_revenue",
+    "category": "time_series",
+    "question": "Show total invoice revenue by month.",
+    "expected_tables": ["Invoice"],
+    "expected_visualization": "line",
+    "expected_data_fields": ["month", "revenue"],
+    "evaluation_notes": "Group invoice totals by calendar month in chronological order."
+  },
+  {
+    "id": "most_popular_tracks",
+    "category": "ranking_and_join",
+    "question": "Which 10 tracks have sold the most copies?",
+    "expected_tables": ["Track", "InvoiceLine"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["track_name", "units_sold"],
+    "evaluation_notes": "Count invoice line occurrences per track and order descending."
+  },
+  {
+    "id": "sales_by_genre",
+    "category": "aggregation_and_join",
+    "question": "Which genres generate the most sales revenue?",
+    "expected_tables": ["Genre", "Track", "InvoiceLine"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["genre_name", "revenue"],
+    "evaluation_notes": "Aggregate invoice line amounts by genre and order descending."
+  },
+  {
+    "id": "employee_customer_counts",
+    "category": "aggregation_and_join",
+    "question": "How many customers does each support representative manage?",
+    "expected_tables": ["Employee", "Customer"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["employee_name", "customer_count"],
+    "evaluation_notes": "Group customers by support representative; include representatives with zero customers if appropriate."
+  },
+  {
+    "id": "album_track_counts",
+    "category": "aggregation_and_join",
+    "question": "Which albums contain the most tracks? Show the top 10.",
+    "expected_tables": ["Album", "Track"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["album_title", "artist_name", "track_count"],
+    "evaluation_notes": "Return up to 10 albums ordered by track count descending."
+  },
+  {
+    "id": "media_type_counts",
+    "category": "aggregation_and_join",
+    "question": "How many tracks are available in each media type?",
+    "expected_tables": ["MediaType", "Track"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["media_type", "track_count"],
+    "evaluation_notes": "One row per media type with a track count."
+  },
+  {
+    "id": "average_track_length_by_genre",
+    "category": "aggregation_and_join",
+    "question": "What is the average track length in minutes for each genre?",
+    "expected_tables": ["Genre", "Track"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["genre_name", "average_minutes"],
+    "evaluation_notes": "Convert milliseconds to minutes before calculating or presenting the average."
+  },
+  {
+    "id": "country_invoice_counts",
+    "category": "aggregation",
+    "question": "How many invoices were billed to each country?",
+    "expected_tables": ["Invoice"],
+    "expected_visualization": "bar",
+    "expected_data_fields": ["billing_country", "invoice_count"],
+    "evaluation_notes": "Count invoices grouped by billing country."
+  },
+  {
+    "id": "unanswerable_weather",
+    "category": "unanswerable",
+    "question": "What was the weather in Nairobi on the day of the highest-value invoice?",
+    "expected_tables": [],
+    "expected_visualization": "none",
+    "expected_data_fields": [],
+    "evaluation_notes": "The database has no weather data; return a clear cannot-answer response instead of inventing an answer."
+  }
+]
