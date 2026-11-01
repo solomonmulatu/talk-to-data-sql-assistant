@@ -1,147 +1,158 @@
 # Architecture
 
+This document describes the **current** Talk to Data architecture. For setup and run commands, see [README.md](../README.md).
+
 ## Overview
 
-Talk to Data accepts a question in plain English, uses LangChain with an OpenAI model to draft SQL for the inspected PostgreSQL schema, validates the SQL, executes it with a read-only database role, and returns the query, tabular results, a suitable visualization, and a short summary based on the returned rows.
+Talk to Data accepts a question in plain English, uses LangChain with an OpenAI model (`ChatOpenAI`) to draft SQL against a **fixed Chinook-style schema** embedded in prompts, validates the SQL with `sqlglot`, executes it on a read-only PostgreSQL connection, then returns a grounded summary, optional Plotly chart JSON, and result rows.
 
-The model never connects directly to PostgreSQL. The application owns schema access, SQL validation, execution, and result formatting.
+The model never connects directly to PostgreSQL. The application owns prompts/schema text, SQL validation, execution, chart building, and result formatting.
 
 ## System diagram
 
 ```mermaid
 flowchart LR
     User[User] --> UI[Streamlit UI]
-    UI -->|POST /ask: question| API[FastAPI API]
+    UI -->|"POST /query?query="| API[FastAPI API]
 
-    API --> Orchestrator[Request orchestration]
-    Orchestrator --> Schema[Schema service]
-    Schema -->|tables, columns, keys| DB[(PostgreSQL)]
-    Schema --> Prompt[Prompt builder]
+    API --> Gen[SqlGenerator]
+    Gen --> Model[OpenAI ChatOpenAI]
+    Model -->|candidate SQL or ERROR token| Gen
+    Gen --> Exec[Executor]
+    Exec --> Val[Validator sqlglot]
+    Val -->|approved SELECT| DB[(PostgreSQL)]
+    Val -->|rejected| Err[Error response]
+    DB -->|rows| Exec
 
-    Prompt --> LC[LangChain workflow]
-    LC --> Model[OpenAI model]
-    Model -->|candidate SQL| LC
-    LC --> Validator[SQL validator]
-
-    Validator -->|approved SELECT| Executor[Read-only query executor]
-    Validator -->|rejected| Error[Safe error response]
-    Executor -->|parameterized, bounded query| DB
-    DB -->|rows| Executor
-
-    Executor --> Results[Result formatter]
-    Results --> Chart[Chart selector]
-    Results --> Summary[LangChain summary step]
-    Summary --> Model
-    Chart --> Response[API response]
-    Summary --> Response
-    Results --> Response
-    Response --> UI
+    Exec --> Sum[Summarizer]
+    Sum --> Model
+    Sum -->|summary plus chart config| Charts[ChartGenerator Plotly]
+    Sum --> Resp[API response]
+    Charts --> Resp
+    Resp --> UI
 ```
+
+Schema text and the table allowlist come from `introspection/prompts.py`, not from a live catalog query. `db.py` only provides the async engine and a connection with read-only and `statement_timeout` settings.
 
 ## Main components
 
-| Component | Responsibility |
-|---|---|
-| Streamlit UI | Collect a question and display the SQL, table, chart, and summary. |
-| FastAPI API | Validate request shape, call the analysis pipeline, return a structured response. |
-| Request orchestration (`api.py`) | Coordinate schema retrieval, generation, validation, execution, charting, and summarization. |
-| PostgreSQL schema service | Read allowed schema metadata: table names, columns, types, and foreign keys. Optionally select relevant tables for each question. |
-| Prompt builder | Provide the question, relevant schema, SQL dialect, rules, and examples to LangChain. |
-| LangChain + `ChatOpenAI` (`sql_generator.py`, `summarizer.py`) | Generate candidate SQL and summarize only the query results supplied by the app. Use async calls from async endpoints. |
-| SQL validator | Parse SQL with `sqlglot`; accept one read-only `SELECT`; check referenced tables; enforce limits and reject unsupported constructs. |
-| Query executor | Run validated SQL using SQLAlchemy's async engine and a PostgreSQL role with read-only permissions. Apply a database-side timeout. |
-| Chart selector | Use deterministic rules to choose a metric, bar chart, line chart, or plain table. |
-| Evaluation runner | Compare generated query results with reference SQL results and record validity, accuracy, repair rate, and latency. |
+| Component | Path | Responsibility |
+|---|---|---|
+| Streamlit UI | `app/streamlit_app.py` | Collect a question; show summary, result table, and chart. Does not display generated SQL. Falls back to a row-based Plotly chart if the API returns no figure. |
+| FastAPI API | `src/talk_to_data/api.py` | `POST /query` orchestration: generate → execute → summarize → optional chart. |
+| Config | `src/talk_to_data/config.py` | Loads `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL` from `.env`. |
+| DB connection | `src/talk_to_data/db.py` | Async SQLAlchemy engine; sets `default_transaction_read_only` and `statement_timeout`. |
+| Prompts / schema | `introspection/prompts.py` | Embedded schema string, `ALLOWED_TABLES`, few-shot examples, system prompt text. |
+| SQL generator | `introspection/sql_generator.py` | NL → SQL via `ainvoke`; maps `WRITE_REQUEST` / `UNANSWERABLE`; includes unused-by-API `repair_sql`. |
+| SQL validator | `introspection/validator.py` | One `SELECT` (query AST); block DML/DDL; allowlist tables; enforce `LIMIT`. |
+| Executor | `src/talk_to_data/executor.py` | Validate then run SQL; `execute_with_repair` exists but `/query` calls `execute_query` only. |
+| Summarizer | `src/talk_to_data/summarizer.py` | Sync structured LLM output: textual summary plus chart config (`should_visualize`, type, x, y, title). |
+| Chart builder | `src/talk_to_data/charts.py` | Build Plotly bar/line/scatter/pie from the summarizer’s chart config. |
+| Evaluation | `eval/run_eval.py` | HTTP contract/smoke checks against `/query` using `eval/questions.json` (no reference-SQL result comparison yet). |
 
 ## Request flow
 
-1. The user submits a question through Streamlit.
-2. Streamlit sends the question to `POST /ask` on FastAPI.
-3. The API checks basic request constraints and starts the analysis pipeline.
-4. The schema service reads permitted metadata from PostgreSQL. It may narrow the context to relevant tables to keep prompts focused.
-5. LangChain sends the schema and question to `ChatOpenAI`, requesting SQL only in a defined format.
-6. The validator parses the candidate SQL and rejects invalid, multi-statement, or non-read-only queries. It checks table names and applies a maximum row count.
-7. The executor runs only validated SQL using the read-only role, with a statement timeout. If enabled, one bounded repair attempt can use the database error message to request corrected SQL; every retry goes through validation again.
-8. The app formats rows for JSON and selects a chart using predictable rules. The model receives only a bounded sample of actual result rows for the written summary.
-9. FastAPI returns the question, validated SQL, columns, rows, chart specification, summary, and optional timing metadata.
-10. Streamlit renders the answer. If the question cannot be answered from the schema or data, the API returns a clear refusal or explanation.
+1. The user submits a question in Streamlit.
+2. Streamlit `POST`s to `http://localhost:8000/query` with query parameter `query`.
+3. `SqlGenerator.generate_sql` sends the fixed system prompt (schema + rules + few-shots) and the question to `ChatOpenAI`.
+4. If the model returns `WRITE_REQUEST` or `UNANSWERABLE`, the API returns `{ "result": "ERROR", "message": "…" }` and Streamlit shows that message.
+5. On success, `Executor.execute_query` validates the SQL and runs it on the read-only connection.
+6. Rows become a DataFrame; `Summarizer.analyze` (sync `.invoke`) produces a summary and chart config from a bounded preview of rows.
+7. If `should_visualize` is true, `ChartGenerator.generate_chart` builds a Plotly figure; the API returns `chart.to_json()` or `null`.
+8. FastAPI returns `{ "summary", "chart", "data" }` where `data` is a list of row dicts.
+9. Streamlit renders summary, dataframe, and chart (API figure or local fallback from rows).
 
-## API response shape
+## API request and response shape
 
-Example response for a successful request:
+**Request:** `POST /query?query=<natural language question>`
+
+**Success:**
 
 ```json
 {
-  "question": "Which artists have the most tracks?",
-  "sql": "SELECT ... LIMIT 1000",
-  "columns": ["artist_name", "track_count"],
-  "rows": [
+  "summary": "The first artist has the most tracks in the returned results.",
+  "chart": "{…plotly figure json…}",
+  "data": [
     {"artist_name": "Example Artist", "track_count": 42}
-  ],
-  "chart": {
-    "type": "bar",
-    "x": "artist_name",
-    "y": "track_count"
-  },
-  "summary": "The first artist has the most tracks in the returned results."
+  ]
 }
 ```
 
-The example values are illustrative, not actual Chinook query output.
+`chart` may be `null` when the summarizer chooses not to visualize.
+
+**Model refusal / write attempt:**
+
+```json
+{
+  "result": "ERROR",
+  "message": "That question cannot be answered from this database."
+}
+```
+
+Validation failures during execution may return `{ "message": "…" }` without a `summary` field; Streamlit treats missing `summary` as an invalid success payload unless `result` is `ERROR`.
+
+The API does not currently return the generated SQL, a separate `columns` list, or a chart spec of the form `{ "type", "x", "y" }`.
 
 ## Safety boundaries
 
-- Use a dedicated PostgreSQL application role for query execution. Grant it only `CONNECT`, schema `USAGE`, and `SELECT` on approved tables.
-- Keep schema discovery and query execution restricted to the intended schema, initially `public`.
-- Require a single parsed `SELECT` statement. Reject writes, DDL, administrative commands, stacked statements, and unsupported constructs.
-- Check tables against the inspected allowlist. Enforce a row limit even if the model omits one.
-- Use bound parameters for any user-supplied values. Do not interpolate values into SQL text.
-- Set PostgreSQL `statement_timeout`; app-side cancellation alone is not a sufficient query limit.
-- Never execute SQL returned by the model before validation. Never let the model call the database directly.
-- Send only bounded result data to the summarizer and instruct it to report only facts supported by those rows.
-- Treat model output, database error messages, and user questions as untrusted input.
+What the code enforces today:
 
-SQL parsing and validation provide defense in depth; database permissions are the final enforcement boundary.
+- Session `default_transaction_read_only = on` and `statement_timeout = '5s'` on the app connection.
+- `sqlglot` parse: exactly one statement; must be a `SELECT`-style query; reject DML/DDL/commands/`SELECT INTO`.
+- Table names checked against the fixed `ALLOWED_TABLES` set; non-`public` schema qualification rejected.
+- Missing or oversized `LIMIT` capped (default max 1000 rows).
+- Model never receives a DB connection; only a markdown preview of result rows goes to the summarizer.
+- Treat model output, DB errors, and user questions as untrusted.
+
+Recommended operations practice (not fully automated by the app):
+
+- Use a PostgreSQL role limited to `CONNECT`, schema `USAGE`, and `SELECT` on approved tables.
+- Prefer bound parameters for any future user-supplied literals; do not interpolate untrusted values into SQL text.
+
+SQL validation is defense in depth; database permissions remain the final enforcement boundary.
 
 ## Project structure
-
-This follows the repository structure defined for the project. The request orchestration lives in `api.py`; the LangChain prompt templates live in `prompts.py`, SQL generation in `sql_generator.py`, and result-grounded summaries in `summarizer.py`.
 
 ```text
 talk-to-data/
 ├── src/talk_to_data/
 │   ├── config.py
-│   ├── db.py                 # PostgreSQL connection (read-only), schema introspection
-│   ├── prompts.py            # LangChain prompts and few-shot examples
-│   ├── sql_generator.py      # Natural language to SQL with LangChain/OpenAI
-│   ├── validator.py          # SELECT-only checks, LIMIT, allowed tables
-│   ├── executor.py           # Execute validated SQL, return DataFrame
-│   ├── charts.py             # Choose and build chart
-│   ├── summarizer.py         # Summarize actual query results with LangChain/OpenAI
-│   └── api.py                # FastAPI endpoints and request orchestration
-├── app/                      # Streamlit UI
-├── data/                     # Optional local sample data
-├── scripts/
-│   └── download_data.py
+│   ├── db.py                 # Async engine, read-only connection, timeout
+│   ├── api.py                # POST /query orchestration
+│   ├── executor.py           # Validate + execute (repair helper unused by API)
+│   ├── charts.py             # Plotly builders from LLM chart config
+│   └── summarizer.py         # Summary + chart config via ChatOpenAI
+├── introspection/
+│   ├── prompts.py            # Embedded schema, allowlist, prompts
+│   ├── sql_generator.py      # NL → SQL (+ repair helper)
+│   └── validator.py          # SELECT / allowlist / LIMIT checks
+├── app/
+│   └── streamlit_app.py
 ├── eval/
-│   ├── questions.json        # Questions and reference SQL
+│   ├── questions.json
 │   └── run_eval.py
-├── tests/
+├── data/                     # Optional local sample data
+├── scripts/                  # Setup helpers not filled in yet
+├── tests/                    # Not populated yet
 ├── docs/
-│   ├── architecture.md
-│   └── design.md
+│   └── DESIGN.MD
 ├── .env.example
 ├── .gitignore
 ├── pyproject.toml
+├── uv.lock
 ├── LICENSE
-├── CHANGELOG.md
 └── README.md
 ```
-## Initial scope and trade-offs
 
-- PostgreSQL is the first supported database dialect.
-- The first release is single-user and does not include authentication.
-- SQL generation is model-assisted, but chart selection and SQL safety checks use deterministic application code.
-- Chinook is a development/evaluation dataset. Do not bundle it until its license and attribution requirements have been reviewed.
-- Evaluation should measure result correctness, not exact SQL-string matches.
+## Scope and known gaps
 
+- PostgreSQL only; single-user; no authentication.
+- Schema context is a hardcoded Chinook-like (lowercase snake_case) description, not live introspection.
+- Chart selection is LLM-driven in the summarizer; Streamlit may derive a fallback chart from rows.
+- SQL safety checks are deterministic application code; chart choice is not.
+- `execute_with_repair` / `repair_sql` are implemented but not wired into `/query`.
+- Evaluation is API contract/smoke testing, not execution accuracy versus reference SQL.
+- Generated SQL is not exposed in the API response or UI.
+- Automated tests and data-download helpers are incomplete.
+
+Possible later work (not implemented): live schema inspection, package consolidation under `src/talk_to_data/`, showing SQL in the UI, deterministic chart rules in the API, wiring repair, result-vs-reference eval, schema selection for large DBs, CSV upload, conversation memory, semantic layer.

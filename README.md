@@ -1,20 +1,22 @@
 # Talk to Data
 
-Ask questions about a PostgreSQL database in plain English. The application uses an LLM to draft a SQL query, validates it, runs it against a read-only database connection, and returns the SQL, results, an appropriate chart, and a short summary grounded in those results.
+Ask questions about a PostgreSQL database in plain English. The application uses an LLM to draft a SQL query, validates it, runs it against a read-only database connection, and returns a short summary grounded in the result rows, optional Plotly chart JSON, and the result data. A Streamlit UI talks to the FastAPI service and shows the summary, table, and chart.
 
-> **Project status:** early development. Architecture, setup, evaluation results, and demo links will be updated as features are completed.
+> **Project status:** early development. This README and [docs/DESIGN.MD](docs/DESIGN.MD) both describe the current implementation.
 
 ## What it does
 
-- Inspects PostgreSQL tables, columns, types, and relationships to give the model relevant schema context.
-- Converts a natural-language question into a SQL `SELECT` query.
-- Validates generated SQL before execution and limits returned rows.
-- Displays the generated SQL, result table, chart (when useful), and a concise summary.
-- Evaluates generated queries against a curated set of questions and reference SQL.
+- Converts a natural-language question into a SQL `SELECT` query with LangChain and OpenAI (`ChatOpenAI`).
+- Supplies schema context from a **fixed Chinook-style schema string** in `introspection/prompts.py` (not live PostgreSQL introspection yet).
+- Validates generated SQL with `sqlglot` before execution: one `SELECT`, allowed tables, and a row `LIMIT`.
+- Executes validated SQL on a connection with `default_transaction_read_only` and a statement timeout.
+- Asks the LLM for a grounded summary and chart configuration, then builds a Plotly figure when visualization is useful.
+- Serves results over `POST /query`; Streamlit displays summary, result rows, and chart (it does not show the generated SQL yet).
+- Runs a lightweight API contract evaluation over curated questions in `eval/`.
 
 ## Example questions
 
-Using the Chinook sample database, you could ask:
+Using a Chinook-compatible sample database (lowercase snake_case table and column names matching the embedded schema), you could ask:
 
 - Which artists have the most tracks?
 - What were total sales by country?
@@ -25,25 +27,50 @@ Using the Chinook sample database, you could ask:
 
 ```mermaid
 flowchart LR
-    Q[Question] --> S[Inspect PostgreSQL schema]
-    S --> L[LLM generates SQL]
-    L --> V[Validate: SELECT only, allowed tables, row limit]
-    V --> E[Execute with read-only database role]
+    Q[Question] --> UI[Streamlit UI]
+    UI -->|"POST /query"| API[FastAPI]
+    API --> L[LLM generates SQL]
+    L --> V[Validate: SELECT only, allowlist, LIMIT]
+    V --> E[Execute read-only connection]
     E --> R[Result rows]
-    R --> C[Choose table or chart]
-    R --> U[LLM summary grounded in results]
-    C --> O[API and Streamlit UI]
-    U --> O
+    R --> S[LLM summary and chart config]
+    S --> C[Plotly chart builder]
+    S --> O[API response]
+    C --> O
+    O --> UI
 ```
 
-The database layer uses PostgreSQL, SQLAlchemy 2, and Psycopg 3. LangChain structures the LLM workflow, and its `langchain-openai` integration connects to OpenAI models. FastAPI provides the API and Streamlit provides the user interface.
+Stack: PostgreSQL, SQLAlchemy 2 (async) and Psycopg 3, LangChain with `langchain-openai`, FastAPI, Streamlit, sqlglot, pandas, and Plotly.
+
+### API shape
+
+`POST /query` with query parameter `query` (the natural-language question).
+
+Success response:
+
+```json
+{
+  "summary": "…",
+  "chart": "{…plotly figure json…} or null",
+  "data": [{"column": "value"}]
+}
+```
+
+Unanswerable or write-style questions return something like:
+
+```json
+{
+  "result": "ERROR",
+  "message": "That question cannot be answered from this database."
+}
+```
 
 ## Requirements
 
-- Python 3.11 or newer
+- Python 3.14 or newer (see `requires-python` in `pyproject.toml`)
 - PostgreSQL installed and running locally, or access to a PostgreSQL server
 - [`uv`](https://docs.astral.sh/uv/) for Python environment and dependency management
-- An API key for the configured LLM provider, if using a hosted model
+- An OpenAI API key for the configured model
 
 ## Quickstart
 
@@ -51,7 +78,7 @@ The database layer uses PostgreSQL, SQLAlchemy 2, and Psycopg 3. LangChain struc
 
 ```powershell
 git clone <your-repository-url>
-cd talk-to-data-sql-assistant
+cd talk-to-data
 ```
 
 ### 2. Create a local PostgreSQL database
@@ -63,19 +90,12 @@ CREATE USER talk_to_data WITH PASSWORD 'change_this_local_password';
 CREATE DATABASE talk_to_data OWNER talk_to_data;
 ```
 
-Do not use these development credentials in a deployed environment. For production, configure a dedicated read-only role for query execution.
+Do not use these development credentials in a deployed environment. Prefer a dedicated read-only role for query execution when you harden the setup.
 
 ### 3. Install the Python dependencies
 
 ```powershell
 uv sync
-```
-
-If the project does not yet include a lockfile, create the environment and install dependencies with:
-
-```powershell
-uv venv
-uv add fastapi "uvicorn[standard]" sqlalchemy "psycopg[binary]" python-dotenv pandas plotly sqlglot streamlit langchain langchain-openai
 ```
 
 ### 4. Configure environment variables
@@ -86,112 +106,119 @@ Copy the example file and edit it:
 Copy-Item .env.example .env
 ```
 
-Set at least the database URL in `.env`:
+Set at least:
 
 ```env
 DATABASE_URL=postgresql+psycopg://talk_to_data:change_this_local_password@localhost:5432/talk_to_data
-```
-
-Add provider-specific settings when configuring the LLM, for example:
-
-```env
 OPENAI_API_KEY=your_openai_api_key_here
-OPENAI_MODEL=your-selected-model
+OPENAI_CHAT_MODEL=gpt-4o
 ```
 
-Use `ChatOpenAI` from the `langchain-openai` integration in your LLM module. In FastAPI async routes, call `await model.ainvoke(...)`. Set `OPENAI_API_KEY` and your chosen model name in `.env`. See the [LangChain ChatOpenAI integration guide](https://docs.langchain.com/oss/python/integrations/chat/openai) for current setup and usage.
+`config.py` reads `OPENAI_CHAT_MODEL` (default `gpt-4o`). If `.env.example` still shows `OPENAI_MODEL`, use that value as `OPENAI_CHAT_MODEL` in `.env`.
 
-Never commit `.env` or API keys. `.env.example` should contain variable names and safe placeholder values only.
+Never commit `.env` or API keys.
 
 ### 5. Load the Chinook sample data (optional)
 
-Download the PostgreSQL SQL script from the [Chinook database releases](https://github.com/lerocha/chinook-database/releases), then import it into your `talk_to_data` database. From PowerShell, if `psql` is on your PATH:
+Download a PostgreSQL SQL script from the [Chinook database releases](https://github.com/lerocha/chinook-database/releases), then import it into your `talk_to_data` database. From PowerShell, if `psql` is on your PATH:
 
 ```powershell
 psql -h localhost -U talk_to_data -d talk_to_data -f .\Chinook_PostgreSql.sql
 ```
 
-The Chinook repository provides a PostgreSQL version of its sample database script. Check its license and attribution terms before redistributing the data file with this project. [Chinook database](https://github.com/lerocha/chinook-database)
+The prompts and allowlist currently assume **lowercase snake_case** Chinook-like names (`album`, `artist`, `invoice`, …). If your dump uses quoted PascalCase identifiers, rename objects or update `introspection/prompts.py` so names match. Check Chinook’s license and attribution before redistributing its data with this project.
 
 ### 6. Start the API and UI
 
-The commands below assume the API entry point will be `src/talk_to_data/api.py` and the Streamlit entry point will be `app/streamlit_app.py`; adjust them if the repo layout changes.
-
-In one PowerShell window:
+From the repository root (imports use both `introspection` and `src.talk_to_data`):
 
 ```powershell
-uv run uvicorn talk_to_data.api:app --app-dir src --reload
+uv run uvicorn src.talk_to_data.api:app --reload
 ```
 
-In another:
+In another window:
 
 ```powershell
 uv run streamlit run app/streamlit_app.py
 ```
 
-Open the local Streamlit URL printed in the terminal. FastAPI’s interactive API documentation will be available at `http://127.0.0.1:8000/docs`.
+Open the local Streamlit URL printed in the terminal. FastAPI docs are at `http://127.0.0.1:8000/docs`.
 
 ## Safety
 
-Generated SQL is untrusted input. The application is designed to:
+Generated SQL is untrusted input. The current code:
 
-- Use a PostgreSQL role with read-only permissions for query execution.
-- Parse and validate each query, allowing only one `SELECT` statement.
-- Reject modifying statements and unsupported SQL constructs.
-- Check referenced tables against the inspected schema.
-- Enforce a maximum result size and a query timeout.
-- Avoid interpolating user-provided values into SQL strings.
+- Sets the session to read-only and applies a PostgreSQL `statement_timeout` (5s) on the app connection.
+- Parses SQL with `sqlglot` and allows only one `SELECT` (including CTEs / unions as queries).
+- Rejects DML, DDL, and other blocked constructs.
+- Checks referenced tables against a fixed allowlist derived from the embedded schema.
+- Enforces a maximum row count (`LIMIT`) when missing or too large.
 
-SQL validation is an additional guard, not a replacement for database permissions. The execution role should not have `INSERT`, `UPDATE`, `DELETE`, DDL, or administrative privileges.
+SQL validation is defense in depth, not a substitute for database permissions. Prefer an execution role without `INSERT`, `UPDATE`, `DELETE`, DDL, or admin privileges.
+
+An `execute_with_repair` path exists in the executor but is **not** used by the `/query` API yet.
 
 ## Evaluation
 
-Evaluation compares generated query results with reference-query results rather than requiring identical SQL text. Planned metrics include execution accuracy, query validity, repair rate, and latency.
+`eval/run_eval.py` posts each case in `eval/questions.json` to `POST /query` and checks response shape: non-empty `summary`, list `data`, expected chart type when applicable, and rejection of unanswerable cases. It does **not** yet compare generated query results to reference SQL.
 
-| Experiment | Execution accuracy | Valid query rate | Notes |
-|---|---:|---:|---|
-| To be measured | — | — | Add results after running `eval/run_eval.py`. |
+```powershell
+uv run python eval/run_eval.py
+```
+
+Optional flags: `--url`, `--questions`, `--timeout`, `--limit`, `--report`.
+
+| Experiment | Contract pass rate | Notes |
+|---|---:|--- |
+| To be measured | — | Fill in after running the eval runner against a loaded Chinook DB. |
 
 ## Project structure
 
 ```text
-src/talk_to_data/
-├── config.py          # Application settings
-├── db.py              # PostgreSQL connection and schema inspection
-├── prompts.py         # LLM instructions and examples
-├── sql_generator.py   # Natural language to SQL
-├── validator.py       # SQL parsing and safety checks
-├── executor.py        # Read-only query execution
-├── charts.py          # Chart selection and construction
-├── summarizer.py      # Summary grounded in query results
-└── api.py             # FastAPI endpoints
-app/
-└── streamlit_app.py   # Streamlit user interface
-data/                  # Optional local sample data; do not commit secrets
-scripts/               # Data setup or download helpers
-eval/                  # Evaluation questions and runner
-tests/                 # Automated tests
-docs/                  # Design notes and architecture documentation
+talk-to-data/
+├── src/talk_to_data/
+│   ├── config.py          # Settings from .env
+│   ├── db.py              # Async engine, read-only connection, timeout
+│   ├── api.py             # FastAPI POST /query orchestration
+│   ├── executor.py        # Validate + execute (repair helper unused by API)
+│   ├── charts.py          # Plotly chart builders
+│   └── summarizer.py      # LLM summary + chart config
+├── introspection/
+│   ├── prompts.py         # Embedded schema, allowlist, SQL/summary prompts
+│   ├── sql_generator.py   # NL → SQL (and repair helper)
+│   └── validator.py       # sqlglot SELECT / allowlist / LIMIT checks
+├── app/
+│   └── streamlit_app.py   # UI: summary, table, chart
+├── eval/
+│   ├── questions.json     # Curated questions and expected chart hints
+│   └── run_eval.py        # API contract / smoke evaluation
+├── data/                  # Optional local sample data (not committed dumps)
+├── scripts/               # Placeholders for setup helpers
+├── tests/                 # Not populated yet
+├── docs/
+│   └── DESIGN.MD          # Current architecture notes
+├── .env.example
+├── pyproject.toml
+├── uv.lock
+├── LICENSE
+└── README.md
 ```
 
 ## Limitations and future work
 
-- PostgreSQL is the supported database dialect.
-- Query quality depends on the schema context and the selected LLM.
-- Ambiguous or unsupported questions should receive a clear explanation instead of a guessed answer.
-- Authentication, multi-user access, and database-dialect portability are outside the initial scope.
-- Future work may include schema selection for large databases, CSV uploads, conversation memory, and a semantic layer.
+- Schema context is hardcoded for a Chinook-like model; live Postgres introspection is not implemented.
+- The UI does not display the generated SQL; the API response does not include it.
+- Chart choice is LLM-driven (with a Streamlit fallback from rows), not a separate deterministic selector in the API.
+- SQL repair on validation/DB errors is implemented but not wired into `/query`.
+- Evaluation is contract/smoke style, not execution-accuracy against reference SQL.
+- `tests/`, download helpers under `scripts/`, and a filled changelog are incomplete.
+- PostgreSQL only; single-user; no auth. Possible later work includes schema selection, CSV upload, conversation memory, and a semantic layer.
 
 ## Development
 
-Run linting and tests (once configured in the repository):
+Automated lint/test tooling is not configured in `pyproject.toml` yet. When you add them, prefer covering the SQL validator, chart builders, and a mocked end-to-end `/query` path.
 
-```powershell
-uv run ruff check .
-uv run pytest
-```
-
-Prioritize tests for the SQL validator, chart selection, and an end-to-end flow using a small test database. Mock LLM calls in automated tests.
+Architecture details live in [docs/DESIGN.MD](docs/DESIGN.MD).
 
 ## License
 
@@ -203,6 +230,5 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE). Review t
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [SQLAlchemy](https://www.sqlalchemy.org/)
 - [Psycopg](https://www.psycopg.org/)
-
-
-
+- [LangChain](https://www.langchain.com/)
+- [Streamlit](https://streamlit.io/)
