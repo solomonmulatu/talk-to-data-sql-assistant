@@ -4,7 +4,7 @@ This document describes the **current** Talk to Data architecture. For setup and
 
 ## Overview
 
-Talk to Data accepts a question in plain English, uses LangChain with an OpenAI model (`ChatOpenAI`) to draft SQL against a **fixed Chinook-style schema** embedded in prompts, validates the SQL with `sqlglot`, executes it on a read-only PostgreSQL connection, then returns a grounded summary, optional Plotly chart JSON, and result rows.
+Talk to Data accepts a question in plain English, uses LangChain with an OpenAI model (`ChatOpenAI`) to draft SQL against a **fixed Chinook-style schema** embedded in prompts, validates the SQL with `sqlglot`, executes it on a read-only PostgreSQL connection, then returns the final SQL, a grounded summary, optional Plotly chart JSON, and result rows.
 
 The model never connects directly to PostgreSQL. The application owns prompts/schema text, SQL validation, execution, chart building, and result formatting.
 
@@ -40,7 +40,7 @@ Schema text and the table allowlist come from `introspection/prompts.py`, not fr
 
 | Component | Path | Responsibility |
 |---|---|---|
-| Streamlit UI | `app/streamlit_app.py` | Collect a question; show summary, result table, and chart. Does not display generated SQL. Falls back to a row-based Plotly chart if the API returns no figure. |
+| Streamlit UI | `app/streamlit_app.py` | Collect a question; show summary, generated SQL, result table, and chart. Falls back to a row-based Plotly chart if the API returns no figure. |
 | FastAPI API | `src/talk_to_data/api.py` | `POST /ask` orchestration: generate â†’ execute_with_repair â†’ summarize â†’ optional chart. |
 | Config | `src/talk_to_data/config.py` | Loads `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL` from `.env`. |
 | DB connection | `src/talk_to_data/db.py` | Async SQLAlchemy engine; sets `default_transaction_read_only` and `statement_timeout`. |
@@ -61,8 +61,8 @@ Schema text and the table allowlist come from `introspection/prompts.py`, not fr
 5. On success, `Executor.execute_with_repair` validates and runs the SQL. On `UnsafeQueryError` or `DBAPIError`, it requests one repaired `SELECT` via `repair_sql`, re-validates, and retries once (`max_retries=1`). Exhausted retries become `QueryFailedError`.
 6. Rows become a DataFrame; `Summarizer.analyze` (sync `.invoke`) produces a summary and chart config from a bounded preview of rows.
 7. If `should_visualize` is true, `ChartGenerator.generate_chart` builds a Plotly figure; the API returns `chart.to_json()` or `null`.
-8. FastAPI returns `{ "summary", "chart", "data", "retries" }` where `data` is a list of row dicts and `retries` is `0` or `1`.
-9. Streamlit renders summary, dataframe, and chart (API figure or local fallback from rows).
+8. FastAPI returns `{ "summary", "sql", "chart", "data", "retries" }` where `sql` is the final validated statement, `data` is a list of row dicts, and `retries` is `0` or `1`.
+9. Streamlit renders summary, generated SQL, dataframe, and chart (API figure or local fallback from rows).
 
 ## API request and response shape
 
@@ -73,7 +73,8 @@ Schema text and the table allowlist come from `introspection/prompts.py`, not fr
 ```json
 {
   "summary": "The first artist has the most tracks in the returned results.",
-  "chart": "{â€¦plotly figure jsonâ€¦}",
+  "sql": "SELECT ... LIMIT 1000",
+  "chart": "{...plotly figure json...}",
   "data": [
     {"artist_name": "Example Artist", "track_count": 42}
   ],
@@ -81,7 +82,7 @@ Schema text and the table allowlist come from `introspection/prompts.py`, not fr
 }
 ```
 
-`chart` may be `null` when the summarizer chooses not to visualize. `retries` counts successful repair attempts used before a valid result (`0` or `1` with the current API setting).
+`sql` is the final validated statement that ran (after repair and LIMIT enforcement when applied). `sql` is the final validated statement that ran (after repair and LIMIT enforcement when applied). `chart` may be `null` when the summarizer chooses not to visualize. `retries` counts successful repair attempts used before a valid result (`0` or `1` with the current API setting).
 
 **Model refusal / write attempt:**
 
@@ -94,7 +95,7 @@ Schema text and the table allowlist come from `introspection/prompts.py`, not fr
 
 Validation failures during execution may return `{ "message": "â€¦" }` without a `summary` field; Streamlit treats missing `summary` as an invalid success payload unless `result` is `ERROR`.
 
-The API does not currently return the generated SQL, a separate `columns` list, or a chart spec of the form `{ "type", "x", "y" }`.
+The API does not currently return a separate `columns` list or a chart spec of the form `{ "type", "x", "y" }` (charts are Plotly JSON).
 
 ## Safety boundaries
 
@@ -155,7 +156,6 @@ talk-to-data/
 - SQL safety checks are deterministic application code; chart choice is not.
 - Repair is bounded to one retry on the `/ask` path; every repaired candidate is re-validated.
 - Evaluation is API contract/smoke testing, not execution accuracy versus reference SQL.
-- Generated SQL is not exposed in the API response or UI.
 - Automated tests and data-download helpers are incomplete.
 
-Possible later work (not implemented): live schema inspection, package consolidation under `src/talk_to_data/`, showing SQL in the UI, deterministic chart rules in the API, result-vs-reference eval, schema selection for large DBs, CSV upload, conversation memory, semantic layer.
+Possible later work (not implemented): live schema inspection, package consolidation under `src/talk_to_data/`, deterministic chart rules in the API, result-vs-reference eval, schema selection for large DBs, CSV upload, conversation memory, semantic layer.

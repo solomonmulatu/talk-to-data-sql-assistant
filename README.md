@@ -1,6 +1,6 @@
 ﻿# Talk to Data
 
-Ask questions about a PostgreSQL database in plain English. The application uses an LLM to draft a SQL query, validates it, runs it against a read-only database connection, and returns a short summary grounded in the result rows, optional Plotly chart JSON, and the result data. A Streamlit UI talks to the FastAPI service and shows the summary, table, and chart.
+Ask questions about a PostgreSQL database in plain English. The application uses an LLM to draft a SQL query, validates it, runs it against a read-only database connection, and returns the final SQL, a short summary grounded in the result rows, optional Plotly chart JSON, and the result data. A Streamlit UI talks to the FastAPI service and shows the summary, generated SQL, table, and chart.
 
 > **Project status:** early development. This README and [docs/DESIGN.MD](docs/DESIGN.MD) both describe the current implementation.
 
@@ -12,7 +12,7 @@ Ask questions about a PostgreSQL database in plain English. The application uses
 - Executes validated SQL on a connection with `default_transaction_read_only` and a statement timeout.
 - On validation or database errors, runs one bounded SQL repair through the LLM and re-validates before retrying.
 - Asks the LLM for a grounded summary and chart configuration, then builds a Plotly figure when visualization is useful.
-- Serves results over `POST /ask`; Streamlit displays summary, result rows, and chart (it does not show the generated SQL yet).
+- Serves results over `POST /ask`; Streamlit displays summary, generated SQL, result rows, and chart.
 - Runs a lightweight API contract evaluation over curated questions in `eval/`.
 
 ## Example questions
@@ -53,14 +53,15 @@ Success response:
 
 ```json
 {
-  "summary": "â€¦",
-  "chart": "{â€¦plotly figure jsonâ€¦} or null",
+  "summary": "...",
+  "sql": "SELECT ... LIMIT 1000",
+  "chart": "{...plotly figure json...} or null",
   "data": [{"column": "value"}],
   "retries": 0
 }
 ```
 
-`retries` is `0` when the first SQL succeeds, or `1` when a single repair attempt was used.
+`sql` is the final validated statement that ran (including any repair and enforced `LIMIT`). `retries` is `0` when the first SQL succeeds, or `1` when a single repair attempt was used.
 
 Unanswerable, write-style, or unrecoverable query failures return something like:
 
@@ -194,7 +195,7 @@ talk-to-data/
 â”‚   â”œâ”€â”€ sql_generator.py   # NL â†’ SQL and repair_sql
 â”‚   â””â”€â”€ validator.py       # sqlglot SELECT / allowlist / LIMIT checks
 â”œâ”€â”€ app/
-â”‚   â””â”€â”€ streamlit_app.py   # UI: summary, table, chart
+â”‚   â””â”€â”€ streamlit_app.py   # UI: summary, SQL, table, chart
 â”œâ”€â”€ eval/
 â”‚   â”œâ”€â”€ questions.json     # Curated questions and expected chart hints
 â”‚   â””â”€â”€ run_eval.py        # API contract / smoke evaluation
@@ -213,7 +214,6 @@ talk-to-data/
 ## Limitations and future work
 
 - Schema context is hardcoded for a Chinook-like model; live Postgres introspection is not implemented.
-- The UI does not display the generated SQL; the API response does not include it.
 - Chart choice is LLM-driven (with a Streamlit fallback from rows), not a separate deterministic selector in the API.
 - Evaluation is contract/smoke style, not execution-accuracy against reference SQL.
 - `tests/`, download helpers under `scripts/`, and a filled changelog are incomplete.

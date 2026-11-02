@@ -50,6 +50,7 @@ async def ask(connection: ConnectionDep, question: str):
 
         return {
             "summary": analysis.summary,
+            "sql": sql_result["sql"],
             "chart": chart.to_json() if chart else None,
             "data": df.to_dict(orient="records"),
             "retries": sql_result.get("retries", 0),

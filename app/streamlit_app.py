@@ -201,6 +201,13 @@ if result is not None:
             with st.container(border=True):
                 st.write(summary)
 
+        st.subheader("Generated SQL")
+        sql = result.get("sql")
+        if isinstance(sql, str) and sql.strip():
+            st.code(sql, language="sql")
+        else:
+            st.info("The service didn’t return the SQL used for this answer.")
+
         rows = result.get("data") or []
         st.subheader("Result rows")
         if rows:
