@@ -4,6 +4,15 @@ Ask questions about a PostgreSQL database in plain English. The application uses
 
 > **Project status:** early development. This README and [docs/DESIGN.MD](docs/DESIGN.MD) both describe the current implementation.
 
+## Live demo
+
+- **App (Streamlit Community Cloud):** https://talk-to-data-sql-assistant.streamlit.app/
+- **API (FastAPI on Render):** https://talk-to-data-sql-assistant-2.onrender.com/
+- **API docs:** https://talk-to-data-sql-assistant-2.onrender.com/docs
+- **Database:** PostgreSQL hosted on [Supabase](https://supabase.com/) (Chinook sample data)
+
+Cold starts on free Streamlit/Render tiers can make the first request slow.
+
 ## What it does
 
 - Converts a natural-language question into a SQL `SELECT` query with LangChain and OpenAI (`ChatOpenAI`).
@@ -215,20 +224,23 @@ talk-to-data/
 
 ## Deploy (Render + Supabase)
 
-Use **Supabase** for PostgreSQL and **Render** for the app (two web services: API and Streamlit).
+Production-style hosting for this project:
+
+- **UI:** Streamlit Community Cloud (see [Live demo](#live-demo))
+- **API:** FastAPI on Render
+- **Database:** PostgreSQL on Supabase
 
 1. Create a Supabase project and import Chinook with **lowercase snake_case** table/column names matching `introspection/prompts.py`.
-2. Copy the Supabase database URI into the API service as `DATABASE_URL` (scheme `postgres://` / `postgresql://` is fine; the app rewrites it for Psycopg and adds SSL for Supabase hosts). Prefer a read-only DB user when you harden the setup.
+2. Copy the Supabase database URI into the API service as `DATABASE_URL` (scheme `postgres://` / `postgresql://` is fine; the app rewrites it for Psycopg and adds SSL for Supabase hosts). Prefer a read-only DB user when you harden the setup. Do not commit the URI.
 3. Create a Render **API** web service from this repo:
    - Build: `pip install .` or `uv sync --frozen` (ensure the Render Python version satisfies `requires-python` in `pyproject.toml`)
    - Start: `uvicorn src.talk_to_data.api:app --host 0.0.0.0 --port $PORT`
    - Env: `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `DATABASE_URL`
-4. Create a Render **Streamlit** web service from the same repo:
-   - Start: `streamlit run app/streamlit_app.py --server.port $PORT --server.address 0.0.0.0`
-   - Env: `API_URL=https://<your-api-service>.onrender.com/ask`
+4. Deploy the Streamlit app (Community Cloud or a Render web service). Set:
+   - `API_URL=https://talk-to-data-sql-assistant-2.onrender.com/ask`
 5. Open the Streamlit URL and ask a Chinook question.
 
-Free Render instances sleep when idle; the first request after idle can be slow.
+Free Streamlit/Render instances sleep when idle; the first request after idle can be slow.
 
 ## Limitations and future work
 
