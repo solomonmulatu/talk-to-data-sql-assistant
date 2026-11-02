@@ -10,6 +10,7 @@ Ask questions about a PostgreSQL database in plain English. The application uses
 - Supplies schema context from a **fixed Chinook-style schema string** in `introspection/prompts.py` (not live PostgreSQL introspection yet).
 - Validates generated SQL with `sqlglot` before execution: one `SELECT`, allowed tables, and a row `LIMIT`.
 - Executes validated SQL on a connection with `default_transaction_read_only` and a statement timeout.
+- On validation or database errors, runs one bounded SQL repair through the LLM and re-validates before retrying.
 - Asks the LLM for a grounded summary and chart configuration, then builds a Plotly figure when visualization is useful.
 - Serves results over `POST /query`; Streamlit displays summary, result rows, and chart (it does not show the generated SQL yet).
 - Runs a lightweight API contract evaluation over curated questions in `eval/`.
@@ -32,6 +33,8 @@ flowchart LR
     API --> L[LLM generates SQL]
     L --> V[Validate: SELECT only, allowlist, LIMIT]
     V --> E[Execute read-only connection]
+    E -->|validation or DB error| Rpr[One LLM SQL repair]
+    Rpr --> V
     E --> R[Result rows]
     R --> S[LLM summary and chart config]
     S --> C[Plotly chart builder]
@@ -52,11 +55,14 @@ Success response:
 {
   "summary": "…",
   "chart": "{…plotly figure json…} or null",
-  "data": [{"column": "value"}]
+  "data": [{"column": "value"}],
+  "retries": 0
 }
 ```
 
-Unanswerable or write-style questions return something like:
+`retries` is `0` when the first SQL succeeds, or `1` when a single repair attempt was used.
+
+Unanswerable, write-style, or unrecoverable query failures return something like:
 
 ```json
 {
@@ -77,7 +83,7 @@ Unanswerable or write-style questions return something like:
 ### 1. Clone the repository
 
 ```powershell
-git clone <your-repository-url>
+git clone https://github.com/solomonmulatu/talk-to-data-sql-assistant
 cd talk-to-data
 ```
 
@@ -156,7 +162,7 @@ Generated SQL is untrusted input. The current code:
 
 SQL validation is defense in depth, not a substitute for database permissions. Prefer an execution role without `INSERT`, `UPDATE`, `DELETE`, DDL, or admin privileges.
 
-An `execute_with_repair` path exists in the executor but is **not** used by the `/query` API yet.
+If the first SQL fails validation or execution, `/query` asks the model for one corrected `SELECT`, runs that candidate through the same validator, and records how many repair attempts were used in `retries`.
 
 ## Evaluation
 
@@ -180,12 +186,12 @@ talk-to-data/
 │   ├── config.py          # Settings from .env
 │   ├── db.py              # Async engine, read-only connection, timeout
 │   ├── api.py             # FastAPI POST /query orchestration
-│   ├── executor.py        # Validate + execute (repair helper unused by API)
+│   ├── executor.py        # Validate + execute with one bounded repair
 │   ├── charts.py          # Plotly chart builders
 │   └── summarizer.py      # LLM summary + chart config
 ├── introspection/
 │   ├── prompts.py         # Embedded schema, allowlist, SQL/summary prompts
-│   ├── sql_generator.py   # NL → SQL (and repair helper)
+│   ├── sql_generator.py   # NL → SQL and repair_sql
 │   └── validator.py       # sqlglot SELECT / allowlist / LIMIT checks
 ├── app/
 │   └── streamlit_app.py   # UI: summary, table, chart
@@ -209,7 +215,6 @@ talk-to-data/
 - Schema context is hardcoded for a Chinook-like model; live Postgres introspection is not implemented.
 - The UI does not display the generated SQL; the API response does not include it.
 - Chart choice is LLM-driven (with a Streamlit fallback from rows), not a separate deterministic selector in the API.
-- SQL repair on validation/DB errors is implemented but not wired into `/query`.
 - Evaluation is contract/smoke style, not execution-accuracy against reference SQL.
 - `tests/`, download helpers under `scripts/`, and a filled changelog are incomplete.
 - PostgreSQL only; single-user; no auth. Possible later work includes schema selection, CSV upload, conversation memory, and a semantic layer.

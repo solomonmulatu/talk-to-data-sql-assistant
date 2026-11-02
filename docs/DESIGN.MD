@@ -18,10 +18,12 @@ flowchart LR
     API --> Gen[SqlGenerator]
     Gen --> Model[OpenAI ChatOpenAI]
     Model -->|candidate SQL or ERROR token| Gen
-    Gen --> Exec[Executor]
+    Gen --> Exec[Executor with repair]
     Exec --> Val[Validator sqlglot]
     Val -->|approved SELECT| DB[(PostgreSQL)]
-    Val -->|rejected| Err[Error response]
+    Val -->|rejected or DB error| Repair[One LLM repair]
+    Repair --> Val
+    Val -->|still failing| Err[Error response]
     DB -->|rows| Exec
 
     Exec --> Sum[Summarizer]
@@ -39,13 +41,13 @@ Schema text and the table allowlist come from `introspection/prompts.py`, not fr
 | Component | Path | Responsibility |
 |---|---|---|
 | Streamlit UI | `app/streamlit_app.py` | Collect a question; show summary, result table, and chart. Does not display generated SQL. Falls back to a row-based Plotly chart if the API returns no figure. |
-| FastAPI API | `src/talk_to_data/api.py` | `POST /query` orchestration: generate → execute → summarize → optional chart. |
+| FastAPI API | `src/talk_to_data/api.py` | `POST /query` orchestration: generate → execute_with_repair → summarize → optional chart. |
 | Config | `src/talk_to_data/config.py` | Loads `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL` from `.env`. |
 | DB connection | `src/talk_to_data/db.py` | Async SQLAlchemy engine; sets `default_transaction_read_only` and `statement_timeout`. |
 | Prompts / schema | `introspection/prompts.py` | Embedded schema string, `ALLOWED_TABLES`, few-shot examples, system prompt text. |
-| SQL generator | `introspection/sql_generator.py` | NL → SQL via `ainvoke`; maps `WRITE_REQUEST` / `UNANSWERABLE`; includes unused-by-API `repair_sql`. |
+| SQL generator | `introspection/sql_generator.py` | NL → SQL via `ainvoke`; maps `WRITE_REQUEST` / `UNANSWERABLE`; `repair_sql` for bounded retries. |
 | SQL validator | `introspection/validator.py` | One `SELECT` (query AST); block DML/DDL; allowlist tables; enforce `LIMIT`. |
-| Executor | `src/talk_to_data/executor.py` | Validate then run SQL; `execute_with_repair` exists but `/query` calls `execute_query` only. |
+| Executor | `src/talk_to_data/executor.py` | `/query` uses `execute_with_repair` (one repair): validate/run, then LLM repair + re-validate on failure. |
 | Summarizer | `src/talk_to_data/summarizer.py` | Sync structured LLM output: textual summary plus chart config (`should_visualize`, type, x, y, title). |
 | Chart builder | `src/talk_to_data/charts.py` | Build Plotly bar/line/scatter/pie from the summarizer’s chart config. |
 | Evaluation | `eval/run_eval.py` | HTTP contract/smoke checks against `/query` using `eval/questions.json` (no reference-SQL result comparison yet). |
@@ -56,10 +58,10 @@ Schema text and the table allowlist come from `introspection/prompts.py`, not fr
 2. Streamlit `POST`s to `http://localhost:8000/query` with query parameter `query`.
 3. `SqlGenerator.generate_sql` sends the fixed system prompt (schema + rules + few-shots) and the question to `ChatOpenAI`.
 4. If the model returns `WRITE_REQUEST` or `UNANSWERABLE`, the API returns `{ "result": "ERROR", "message": "…" }` and Streamlit shows that message.
-5. On success, `Executor.execute_query` validates the SQL and runs it on the read-only connection.
+5. On success, `Executor.execute_with_repair` validates and runs the SQL. On `UnsafeQueryError` or `DBAPIError`, it requests one repaired `SELECT` via `repair_sql`, re-validates, and retries once (`max_retries=1`). Exhausted retries become `QueryFailedError`.
 6. Rows become a DataFrame; `Summarizer.analyze` (sync `.invoke`) produces a summary and chart config from a bounded preview of rows.
 7. If `should_visualize` is true, `ChartGenerator.generate_chart` builds a Plotly figure; the API returns `chart.to_json()` or `null`.
-8. FastAPI returns `{ "summary", "chart", "data" }` where `data` is a list of row dicts.
+8. FastAPI returns `{ "summary", "chart", "data", "retries" }` where `data` is a list of row dicts and `retries` is `0` or `1`.
 9. Streamlit renders summary, dataframe, and chart (API figure or local fallback from rows).
 
 ## API request and response shape
@@ -74,11 +76,12 @@ Schema text and the table allowlist come from `introspection/prompts.py`, not fr
   "chart": "{…plotly figure json…}",
   "data": [
     {"artist_name": "Example Artist", "track_count": 42}
-  ]
+  ],
+  "retries": 0
 }
 ```
 
-`chart` may be `null` when the summarizer chooses not to visualize.
+`chart` may be `null` when the summarizer chooses not to visualize. `retries` counts successful repair attempts used before a valid result (`0` or `1` with the current API setting).
 
 **Model refusal / write attempt:**
 
@@ -119,12 +122,12 @@ talk-to-data/
 │   ├── config.py
 │   ├── db.py                 # Async engine, read-only connection, timeout
 │   ├── api.py                # POST /query orchestration
-│   ├── executor.py           # Validate + execute (repair helper unused by API)
+│   ├── executor.py           # Validate + execute with one bounded repair
 │   ├── charts.py             # Plotly builders from LLM chart config
 │   └── summarizer.py         # Summary + chart config via ChatOpenAI
 ├── introspection/
 │   ├── prompts.py            # Embedded schema, allowlist, prompts
-│   ├── sql_generator.py      # NL → SQL (+ repair helper)
+│   ├── sql_generator.py      # NL → SQL and repair_sql
 │   └── validator.py          # SELECT / allowlist / LIMIT checks
 ├── app/
 │   └── streamlit_app.py
@@ -150,9 +153,9 @@ talk-to-data/
 - Schema context is a hardcoded Chinook-like (lowercase snake_case) description, not live introspection.
 - Chart selection is LLM-driven in the summarizer; Streamlit may derive a fallback chart from rows.
 - SQL safety checks are deterministic application code; chart choice is not.
-- `execute_with_repair` / `repair_sql` are implemented but not wired into `/query`.
+- Repair is bounded to one retry on the `/query` path; every repaired candidate is re-validated.
 - Evaluation is API contract/smoke testing, not execution accuracy versus reference SQL.
 - Generated SQL is not exposed in the API response or UI.
 - Automated tests and data-download helpers are incomplete.
 
-Possible later work (not implemented): live schema inspection, package consolidation under `src/talk_to_data/`, showing SQL in the UI, deterministic chart rules in the API, wiring repair, result-vs-reference eval, schema selection for large DBs, CSV upload, conversation memory, semantic layer.
+Possible later work (not implemented): live schema inspection, package consolidation under `src/talk_to_data/`, showing SQL in the UI, deterministic chart rules in the API, result-vs-reference eval, schema selection for large DBs, CSV upload, conversation memory, semantic layer.
