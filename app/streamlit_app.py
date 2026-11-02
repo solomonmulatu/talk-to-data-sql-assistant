@@ -1,6 +1,7 @@
 """Friendly Streamlit frontend for a Talk to Data FastAPI service."""
 
 import json
+import os
 from typing import Any
 
 import pandas as pd
@@ -10,7 +11,17 @@ import requests
 import streamlit as st
 
 
-API_URL = "http://localhost:8000/ask"
+def resolve_api_url() -> str:
+    """Prefer API_URL; otherwise build from API_BASE_URL (local default)."""
+    explicit = os.getenv("API_URL", "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    base = os.getenv("API_BASE_URL", "http://localhost:8000").strip().rstrip("/")
+    return f"{base}/ask"
+
+
+API_URL = resolve_api_url()
 HTTP_METHOD = "POST"
 QUESTION_PARAMETER = "question"
 REQUEST_TIMEOUT_SECONDS = 60

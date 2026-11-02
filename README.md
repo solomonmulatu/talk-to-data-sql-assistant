@@ -121,7 +121,9 @@ OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_CHAT_MODEL=gpt-4o
 ```
 
-`config.py` reads `OPENAI_CHAT_MODEL` (default `gpt-4o`). If `.env.example` still shows `OPENAI_MODEL`, use that value as `OPENAI_CHAT_MODEL` in `.env`.
+`config.py` reads `OPENAI_CHAT_MODEL` (default `gpt-4o`). `postgres://` and `postgresql://` database URLs are normalized to `postgresql+psycopg://`. Supabase hosts also get `sslmode=require` when it is missing.
+
+For Streamlit against a remote API, set `API_URL` to the full ask endpoint (for example `https://your-api.onrender.com/ask`). If unset, Streamlit uses `API_BASE_URL` + `/ask`, defaulting to `http://localhost:8000/ask`.
 
 Never commit `.env` or API keys.
 
@@ -210,6 +212,23 @@ talk-to-data/
 â”œâ”€â”€ LICENSE
 â””â”€â”€ README.md
 ```
+
+## Deploy (Render + Supabase)
+
+Use **Supabase** for PostgreSQL and **Render** for the app (two web services: API and Streamlit).
+
+1. Create a Supabase project and import Chinook with **lowercase snake_case** table/column names matching `introspection/prompts.py`.
+2. Copy the Supabase database URI into the API service as `DATABASE_URL` (scheme `postgres://` / `postgresql://` is fine; the app rewrites it for Psycopg and adds SSL for Supabase hosts). Prefer a read-only DB user when you harden the setup.
+3. Create a Render **API** web service from this repo:
+   - Build: `pip install .` or `uv sync --frozen` (ensure the Render Python version satisfies `requires-python` in `pyproject.toml`)
+   - Start: `uvicorn src.talk_to_data.api:app --host 0.0.0.0 --port $PORT`
+   - Env: `OPENAI_API_KEY`, `OPENAI_CHAT_MODEL`, `DATABASE_URL`
+4. Create a Render **Streamlit** web service from the same repo:
+   - Start: `streamlit run app/streamlit_app.py --server.port $PORT --server.address 0.0.0.0`
+   - Env: `API_URL=https://<your-api-service>.onrender.com/ask`
+5. Open the Streamlit URL and ask a Chinook question.
+
+Free Render instances sleep when idle; the first request after idle can be slow.
 
 ## Limitations and future work
 
