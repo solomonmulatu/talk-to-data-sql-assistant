@@ -2,7 +2,7 @@
 
 Ask questions about a PostgreSQL database in plain English. The application uses an LLM to draft a SQL query, validates it, runs it against a read-only database connection, and returns the final SQL, a short summary grounded in the result rows, optional Plotly chart JSON, and the result data. A Streamlit UI talks to the FastAPI service and shows the summary, generated SQL, table, and chart.
 
-> **Project status:** early development. This README and [docs/DESIGN.MD](docs/DESIGN.MD) both describe the current implementation.
+> **Portfolio demo.** Live app and API links are below. This README and [docs/DESIGN.MD](docs/DESIGN.MD) match the current implementation.
 
 ## Live demo
 
@@ -190,38 +190,40 @@ Optional flags: `--url`, `--questions`, `--timeout`, `--limit`, `--report`.
 
 | Experiment | Contract pass rate | Notes |
 |---|---:|--- |
-| To be measured | â€” | Fill in after running the eval runner against a loaded Chinook DB. |
+| To be measured | - | Fill in after running the eval runner against a loaded Chinook DB. |
 
 ## Project structure
 
 ```text
 talk-to-data/
-â”œâ”€â”€ src/talk_to_data/
-â”‚   â”œâ”€â”€ config.py          # Settings from .env
-â”‚   â”œâ”€â”€ db.py              # Async engine, read-only connection, timeout
-â”‚   â”œâ”€â”€ api.py             # FastAPI POST /ask orchestration
-â”‚   â”œâ”€â”€ executor.py        # Validate + execute with one bounded repair
-â”‚   â”œâ”€â”€ charts.py          # Plotly chart builders
-â”‚   â””â”€â”€ summarizer.py      # LLM summary + chart config
-â”œâ”€â”€ introspection/
-â”‚   â”œâ”€â”€ prompts.py         # Embedded schema, allowlist, SQL/summary prompts
-â”‚   â”œâ”€â”€ sql_generator.py   # NL â†’ SQL and repair_sql
-â”‚   â””â”€â”€ validator.py       # sqlglot SELECT / allowlist / LIMIT checks
-â”œâ”€â”€ app/
-â”‚   â””â”€â”€ streamlit_app.py   # UI: summary, SQL, table, chart
-â”œâ”€â”€ eval/
-â”‚   â”œâ”€â”€ questions.json     # Curated questions and expected chart hints
-â”‚   â””â”€â”€ run_eval.py        # API contract / smoke evaluation
-â”œâ”€â”€ data/                  # Optional local sample data (not committed dumps)
-â”œâ”€â”€ scripts/               # Placeholders for setup helpers
-â”œâ”€â”€ tests/                 # Not populated yet
-â”œâ”€â”€ docs/
-â”‚   â””â”€â”€ DESIGN.MD          # Current architecture notes
-â”œâ”€â”€ .env.example
-â”œâ”€â”€ pyproject.toml
-â”œâ”€â”€ uv.lock
-â”œâ”€â”€ LICENSE
-â””â”€â”€ README.md
+|-- src/talk_to_data/
+|   |-- config.py          # Settings from .env
+|   |-- db.py              # Async engine, read-only connection, timeout
+|   |-- api.py             # FastAPI POST /ask orchestration
+|   |-- executor.py        # Validate + execute with one bounded repair
+|   |-- charts.py          # Plotly chart builders
+|   `-- summarizer.py      # LLM summary + chart config
+|-- introspection/
+|   |-- prompts.py         # Embedded schema, allowlist, SQL/summary prompts
+|   |-- sql_generator.py   # NL -> SQL and repair_sql
+|   `-- validator.py       # sqlglot SELECT / allowlist / LIMIT checks
+|-- app/
+|   `-- streamlit_app.py   # UI: summary, SQL, table, chart
+|-- eval/
+|   |-- questions.json     # Curated questions and expected chart hints
+|   `-- run_eval.py        # API contract / smoke evaluation
+|-- data/                  # Optional local sample data (not committed dumps)
+|-- scripts/               # Setup helper placeholders
+|-- tests/                 # Not populated yet
+|-- docs/
+|   |-- DESIGN.MD          # Current architecture notes
+|   |-- architecture.png
+|   `-- talk_to_data.gif   # README demo GIF
+|-- .env.example
+|-- pyproject.toml
+|-- uv.lock
+|-- LICENSE
+`-- README.md
 ```
 
 ## Deploy (Render + Supabase)
