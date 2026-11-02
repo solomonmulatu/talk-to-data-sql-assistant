@@ -6,6 +6,8 @@ Ask questions about a PostgreSQL database in plain English. The application uses
 
 ## Live demo
 
+![Talk to Data demo](docs/talk_to_data.gif)
+
 - **App (Streamlit Community Cloud):** https://talk-to-data-sql-assistant.streamlit.app/
 - **API (FastAPI on Render):** https://talk-to-data-sql-assistant-2.onrender.com/
 - **API docs:** https://talk-to-data-sql-assistant-2.onrender.com/docs
