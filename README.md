@@ -1,4 +1,4 @@
-# Talk to Data
+﻿# Talk to Data
 
 Ask questions about a PostgreSQL database in plain English. The application uses an LLM to draft a SQL query, validates it, runs it against a read-only database connection, and returns a short summary grounded in the result rows, optional Plotly chart JSON, and the result data. A Streamlit UI talks to the FastAPI service and shows the summary, table, and chart.
 
@@ -12,7 +12,7 @@ Ask questions about a PostgreSQL database in plain English. The application uses
 - Executes validated SQL on a connection with `default_transaction_read_only` and a statement timeout.
 - On validation or database errors, runs one bounded SQL repair through the LLM and re-validates before retrying.
 - Asks the LLM for a grounded summary and chart configuration, then builds a Plotly figure when visualization is useful.
-- Serves results over `POST /query`; Streamlit displays summary, result rows, and chart (it does not show the generated SQL yet).
+- Serves results over `POST /ask`; Streamlit displays summary, result rows, and chart (it does not show the generated SQL yet).
 - Runs a lightweight API contract evaluation over curated questions in `eval/`.
 
 ## Example questions
@@ -29,7 +29,7 @@ Using a Chinook-compatible sample database (lowercase snake_case table and colum
 ```mermaid
 flowchart LR
     Q[Question] --> UI[Streamlit UI]
-    UI -->|"POST /query"| API[FastAPI]
+    UI -->|"POST /ask"| API[FastAPI]
     API --> L[LLM generates SQL]
     L --> V[Validate: SELECT only, allowlist, LIMIT]
     V --> E[Execute read-only connection]
@@ -47,14 +47,14 @@ Stack: PostgreSQL, SQLAlchemy 2 (async) and Psycopg 3, LangChain with `langchain
 
 ### API shape
 
-`POST /query` with query parameter `query` (the natural-language question).
+`POST /ask` with query parameter `question` (the natural-language question).
 
 Success response:
 
 ```json
 {
-  "summary": "…",
-  "chart": "{…plotly figure json…} or null",
+  "summary": "â€¦",
+  "chart": "{â€¦plotly figure jsonâ€¦} or null",
   "data": [{"column": "value"}],
   "retries": 0
 }
@@ -132,7 +132,7 @@ Download a PostgreSQL SQL script from the [Chinook database releases](https://gi
 psql -h localhost -U talk_to_data -d talk_to_data -f .\Chinook_PostgreSql.sql
 ```
 
-The prompts and allowlist currently assume **lowercase snake_case** Chinook-like names (`album`, `artist`, `invoice`, …). If your dump uses quoted PascalCase identifiers, rename objects or update `introspection/prompts.py` so names match. Check Chinook’s license and attribution before redistributing its data with this project.
+The prompts and allowlist currently assume **lowercase snake_case** Chinook-like names (`album`, `artist`, `invoice`, â€¦). If your dump uses quoted PascalCase identifiers, rename objects or update `introspection/prompts.py` so names match. Check Chinookâ€™s license and attribution before redistributing its data with this project.
 
 ### 6. Start the API and UI
 
@@ -162,11 +162,11 @@ Generated SQL is untrusted input. The current code:
 
 SQL validation is defense in depth, not a substitute for database permissions. Prefer an execution role without `INSERT`, `UPDATE`, `DELETE`, DDL, or admin privileges.
 
-If the first SQL fails validation or execution, `/query` asks the model for one corrected `SELECT`, runs that candidate through the same validator, and records how many repair attempts were used in `retries`.
+If the first SQL fails validation or execution, `/ask` asks the model for one corrected `SELECT`, runs that candidate through the same validator, and records how many repair attempts were used in `retries`.
 
 ## Evaluation
 
-`eval/run_eval.py` posts each case in `eval/questions.json` to `POST /query` and checks response shape: non-empty `summary`, list `data`, expected chart type when applicable, and rejection of unanswerable cases. It does **not** yet compare generated query results to reference SQL.
+`eval/run_eval.py` posts each case in `eval/questions.json` to `POST /ask` and checks response shape: non-empty `summary`, list `data`, expected chart type when applicable, and rejection of unanswerable cases. It does **not** yet compare generated query results to reference SQL.
 
 ```powershell
 uv run python eval/run_eval.py
@@ -176,38 +176,38 @@ Optional flags: `--url`, `--questions`, `--timeout`, `--limit`, `--report`.
 
 | Experiment | Contract pass rate | Notes |
 |---|---:|--- |
-| To be measured | — | Fill in after running the eval runner against a loaded Chinook DB. |
+| To be measured | â€” | Fill in after running the eval runner against a loaded Chinook DB. |
 
 ## Project structure
 
 ```text
 talk-to-data/
-├── src/talk_to_data/
-│   ├── config.py          # Settings from .env
-│   ├── db.py              # Async engine, read-only connection, timeout
-│   ├── api.py             # FastAPI POST /query orchestration
-│   ├── executor.py        # Validate + execute with one bounded repair
-│   ├── charts.py          # Plotly chart builders
-│   └── summarizer.py      # LLM summary + chart config
-├── introspection/
-│   ├── prompts.py         # Embedded schema, allowlist, SQL/summary prompts
-│   ├── sql_generator.py   # NL → SQL and repair_sql
-│   └── validator.py       # sqlglot SELECT / allowlist / LIMIT checks
-├── app/
-│   └── streamlit_app.py   # UI: summary, table, chart
-├── eval/
-│   ├── questions.json     # Curated questions and expected chart hints
-│   └── run_eval.py        # API contract / smoke evaluation
-├── data/                  # Optional local sample data (not committed dumps)
-├── scripts/               # Placeholders for setup helpers
-├── tests/                 # Not populated yet
-├── docs/
-│   └── DESIGN.MD          # Current architecture notes
-├── .env.example
-├── pyproject.toml
-├── uv.lock
-├── LICENSE
-└── README.md
+â”œâ”€â”€ src/talk_to_data/
+â”‚   â”œâ”€â”€ config.py          # Settings from .env
+â”‚   â”œâ”€â”€ db.py              # Async engine, read-only connection, timeout
+â”‚   â”œâ”€â”€ api.py             # FastAPI POST /ask orchestration
+â”‚   â”œâ”€â”€ executor.py        # Validate + execute with one bounded repair
+â”‚   â”œâ”€â”€ charts.py          # Plotly chart builders
+â”‚   â””â”€â”€ summarizer.py      # LLM summary + chart config
+â”œâ”€â”€ introspection/
+â”‚   â”œâ”€â”€ prompts.py         # Embedded schema, allowlist, SQL/summary prompts
+â”‚   â”œâ”€â”€ sql_generator.py   # NL â†’ SQL and repair_sql
+â”‚   â””â”€â”€ validator.py       # sqlglot SELECT / allowlist / LIMIT checks
+â”œâ”€â”€ app/
+â”‚   â””â”€â”€ streamlit_app.py   # UI: summary, table, chart
+â”œâ”€â”€ eval/
+â”‚   â”œâ”€â”€ questions.json     # Curated questions and expected chart hints
+â”‚   â””â”€â”€ run_eval.py        # API contract / smoke evaluation
+â”œâ”€â”€ data/                  # Optional local sample data (not committed dumps)
+â”œâ”€â”€ scripts/               # Placeholders for setup helpers
+â”œâ”€â”€ tests/                 # Not populated yet
+â”œâ”€â”€ docs/
+â”‚   â””â”€â”€ DESIGN.MD          # Current architecture notes
+â”œâ”€â”€ .env.example
+â”œâ”€â”€ pyproject.toml
+â”œâ”€â”€ uv.lock
+â”œâ”€â”€ LICENSE
+â””â”€â”€ README.md
 ```
 
 ## Limitations and future work
@@ -221,13 +221,13 @@ talk-to-data/
 
 ## Development
 
-Automated lint/test tooling is not configured in `pyproject.toml` yet. When you add them, prefer covering the SQL validator, chart builders, and a mocked end-to-end `/query` path.
+Automated lint/test tooling is not configured in `pyproject.toml` yet. When you add them, prefer covering the SQL validator, chart builders, and a mocked end-to-end `/ask` path.
 
 Architecture details live in [docs/DESIGN.MD](docs/DESIGN.MD).
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE). Review the Chinook dataset’s license and attribution requirements separately before including its data or scripts in a distribution.
+This project is licensed under the MIT License. See [LICENSE](LICENSE). Review the Chinook datasetâ€™s license and attribution requirements separately before including its data or scripts in a distribution.
 
 ## Acknowledgements
 

@@ -20,10 +20,8 @@ summarizer = Summarizer()
 chart_generator = ChartGenerator()
 
 
-@app.post("/query")
-async def root(connection: ConnectionDep, query: str):
-    question = query
-
+@app.post("/ask")
+async def ask(connection: ConnectionDep, question: str):
     response = await generator.generate_sql(question=question)
 
     if response["result"] != "SUCCESS":

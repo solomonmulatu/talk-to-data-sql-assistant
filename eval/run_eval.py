@@ -12,7 +12,7 @@ import pandas as pd
 import requests
 
 
-DEFAULT_URL = "http://localhost:8000/query"
+DEFAULT_URL = "http://localhost:8000/ask"
 DEFAULT_QUESTIONS = Path(__file__).with_name("questions.json")
 
 
@@ -92,7 +92,7 @@ def evaluate_case(case: dict[str, Any], url: str, timeout: float) -> dict[str, A
     try:
         response = requests.post(
             url,
-            params={"query": question},
+            params={"question": question},
             headers={"Accept": "application/json"},
             timeout=timeout,
         )

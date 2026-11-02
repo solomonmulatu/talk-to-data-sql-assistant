@@ -10,9 +10,9 @@ import requests
 import streamlit as st
 
 
-API_URL = "http://localhost:8000/query"
+API_URL = "http://localhost:8000/ask"
 HTTP_METHOD = "POST"
-QUESTION_PARAMETER = "query"
+QUESTION_PARAMETER = "question"
 REQUEST_TIMEOUT_SECONDS = 60
 EXAMPLE_QUESTIONS = [
     "How many customers are in each country?",
