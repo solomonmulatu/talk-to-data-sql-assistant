@@ -34,3 +34,9 @@ db_v1
 .idea/
 .DS_Store
 Thumbs.db.env
+
+
+# IDEs
+.idea/
+.vscode/
+*.swp
